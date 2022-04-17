@@ -1,5 +1,4 @@
-import puppeter, { Dialog } from "puppeteer";
-import $ from "cheerio";
+import puppeter from "puppeteer";
 import dotenv from "dotenv";
 import path from "path";
 import mkdirp from "mkdirp";
@@ -46,6 +45,7 @@ const DEFAULT_WAIT_OPTIONS: puppeter.WaitForOptions = {
 
 // 스킨 디렉토리의 모든 폴더를 클릭하여 파일을 클릭할 수 있는 상태로 만드는 함수
 const openDirectory = async (_page: puppeter.Page) => {
+  process.stdout.write("start open directorys...");
   await _page.waitForSelector("#aside > ul > li.all");
   await _page.click("#aside > ul > li.all");
   await _page.waitForSelector(
@@ -60,6 +60,7 @@ const openDirectory = async (_page: puppeter.Page) => {
       (elHandles) => elHandles.forEach((el: any) => el.click())
     );
   }
+  process.stdout.write("done\n");
 };
 
 // 스마트디자인의 특정 파일 url로 접속하는 함수
@@ -103,8 +104,12 @@ const clickToFile = async (
 
       const timer = setInterval(async () => {
         if (_page.url() != originURL) {
+          let suspend = true;
           await goToFile(_page, _skin, _url);
-          await openDirectory(_page);
+          await openDirectory(_page).then(() => {
+            suspend = false;
+          });
+          while (suspend);
         } else
           await _page.click(
             `#snbAll > ul > li > ul li.file a[href="${_href}"]`
@@ -195,12 +200,20 @@ const makeDir = async (_skin: { name: string; url: string }, _url: string) => {
         })
         .then(async (urls) => {
           // 크롤링 시작
+          const filesNum = urls.html.length + urls.etc.length;
+          let crawledFilesNum = 0;
+
           for (const url of urls.html) {
             await clickToFile(page, _skin, url);
             const dir = await makeDir(_skin, url);
 
             // Cafe24 스마트디자인 내장 CodeMirro의 getValue()를 호출 및 코드텍스트 저장
-            process.stdout.write(`crawling file: ${url}...`);
+            crawledFilesNum += 1;
+            process.stdout.write(
+              `[${((crawledFilesNum / filesNum) * 100).toFixed(
+                2
+              )}%] crawling file: ${url}...`
+            );
             await page.waitForSelector(".CodeMirror-line");
             const code = await page.evaluate("SDE.editor.getValue()");
             await fs.writeFile(path.join.apply(null, dir), code, (err) => {
@@ -219,12 +232,19 @@ const makeDir = async (_skin: { name: string; url: string }, _url: string) => {
               res.pipe(file);
               file.on("finish", () => {
                 file.close();
-                console.log(`crawling file: ${url}...done`);
+                crawledFilesNum += 1;
+                console.log(
+                  `[${((crawledFilesNum / filesNum) * 100).toFixed(
+                    2
+                  )}%] crawling file: ${url}...done`
+                );
+                if (crawledFilesNum == filesNum) {
+                  console.log(`Done crawling: ${_skin["url"]}\n`);
+                }
               });
             });
           }
         });
-      console.log(`Done crawling: ${_skin["url"]}`);
     }
     await browser.close();
   } else {
